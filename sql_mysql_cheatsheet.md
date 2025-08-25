@@ -1,5 +1,6 @@
 # SQL / MySQL Cheatsheet
 
+## The 90% you’ll use daily
 
 ### SELECT skeleton
 ```sql
@@ -300,3 +301,124 @@ SELECT * FROM information_schema.tables WHERE table_schema='mydb' ORDER BY data_
 - 3NF: no transitive dependencies (non-key → non-key).
 
 De-normalize *deliberately* for read performance once you know the access patterns.
+---
+
+## Joins: CROSS JOIN vs INNER/LEFT and ON vs WHERE
+
+Here’s the clean, practical breakdown.
+
+### CROSS JOIN vs (INNER/LEFT) JOIN
+
+* **CROSS JOIN**
+  Cartesian product: every row of A with every row of B. No join condition.
+
+  ```sql
+  SELECT * FROM A CROSS JOIN B;   -- n(A) * n(B) rows
+  -- same as:
+  -- SELECT * FROM A, B;
+  ```
+
+* **INNER JOIN**
+  Only rows that **match** the ON condition.
+
+  ```sql
+  SELECT * 
+  FROM A 
+  JOIN B ON A.key = B.key;
+  ```
+
+* **LEFT JOIN**
+  Keep **all rows from A**, match B when possible; if no match, B’s columns are NULL.
+
+  ```sql
+  SELECT * 
+  FROM A 
+  LEFT JOIN B ON A.key = B.key;
+  ```
+
+**When to use CROSS JOIN?**
+When you *want* all combinations, e.g., building a grid like **Students × Subjects** before counting exams.
+
+> Note: In MySQL, writing `CROSS JOIN ... ON ...` is parsed like an `INNER JOIN`. Stick to: `CROSS JOIN` (no ON) for cartesian product, and `INNER/LEFT JOIN ... ON ...` for matches.
+
+---
+
+### ON vs WHERE (the rules that matter)
+
+#### 1) INNER JOIN: ON vs WHERE are equivalent
+You can put the join predicate in `ON` **or** in `WHERE` (it yields the same result).
+
+```sql
+-- A
+SELECT * FROM A JOIN B ON A.key = B.key;
+
+-- B (equivalent for INNER JOIN)
+SELECT * FROM A CROSS JOIN B
+WHERE A.key = B.key;
+```
+
+#### 2) LEFT JOIN: ON vs WHERE are **not** equivalent
+Putting filters on the right table in the **WHERE** clause can turn a LEFT JOIN into an INNER JOIN by eliminating the NULL-extended rows.
+
+**Correct (keeps A rows with no match in B):**
+```sql
+SELECT *
+FROM A
+LEFT JOIN B
+  ON A.key = B.key          -- define the match here
+ AND B.status = 'active'    -- right-table filter belongs here for LEFT JOIN
+WHERE A.created_at >= '2025-01-01';   -- final result filter (left-side ok)
+```
+
+**Wrong (accidentally becomes INNER JOIN):**
+```sql
+SELECT *
+FROM A
+LEFT JOIN B ON A.key = B.key
+WHERE B.status = 'active';  -- this removes NULL B rows -> no longer left join
+```
+
+#### 3) Anti-join pattern (find rows in A with **no** match in B)
+```sql
+SELECT A.*
+FROM A
+LEFT JOIN B ON A.key = B.key
+WHERE B.key IS NULL;        -- keep only A rows with no matching B
+```
+(Any additional right-side matching criteria belong in the **ON**, not WHERE.)
+
+---
+
+### Quick rules of thumb
+* Use **CROSS JOIN** only when you explicitly need **all combinations**.
+* Use **INNER JOIN** to keep only matching pairs.
+* Use **LEFT JOIN** to keep all left rows (even when unmatched).
+* For **LEFT JOIN**:
+  * Put right-table conditions in **ON**.
+  * Put final-result filters (usually on left table) in **WHERE**.
+* For **INNER JOIN**, `ON` vs `WHERE` doesn’t matter for correctness, but keep **join predicates in ON** and **post-join filters in WHERE** for clarity.
+
+---
+
+## Mini join diagrams (conceptual)
+
+```
+CROSS JOIN (Cartesian product)
+A × B = every combination
+[A1] [A2]
+  |    |
+ [B1] [B2]
+Pairs: (A1,B1), (A1,B2), (A2,B1), (A2,B2), ...
+
+INNER JOIN (A ⋂ B)
+[   A   (overlap)   B   ]
+Only rows where keys match on both sides.
+
+LEFT JOIN (A ▷ B)
+[   A   (overlap)   B   ]
+Keeps all A rows. If no match in B, B columns are NULL.
+
+LEFT ANTI-JOIN (A \ B) via LEFT JOIN + WHERE B.key IS NULL
+[   A   (   )   B   ]
+Keeps only A rows that have no matching B.
+```
